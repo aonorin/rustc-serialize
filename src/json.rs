@@ -16,8 +16,8 @@
 //! # What is JSON?
 //!
 //! JSON (JavaScript Object Notation) is a way to write data in Javascript.
-//! Like XML, it allows to encode structured data in a text format that can be
-//! easily read by humans Its simple syntax and native compatibility with
+//! Like XML, it allows encoding structured data in a text format that can be
+//! easily read by humans. Its simple syntax and native compatibility with
 //! JavaScript have made it a widely used format.
 //!
 //! Data types that can be encoded are JavaScript types (see the `Json` enum
@@ -72,7 +72,7 @@
 //! string or buffer using the functions described above.  You can also use the
 //! `json::Encoder` object, which implements the `Encoder` trait.
 //!
-//! When using `ToJson` the `Encodable` trait implementation is not
+//! When using `ToJson`, the `Encodable` trait implementation is not
 //! mandatory.
 //!
 //! # Examples of use
@@ -112,7 +112,7 @@
 //!
 //! ## Using the `ToJson` trait
 //!
-//! The examples above use the `ToJson` trait to generate the JSON string,
+//! The examples below use the `ToJson` trait to generate the JSON string,
 //! which is required for custom mappings.
 //!
 //! ### Simple example of `ToJson` usage
@@ -234,7 +234,7 @@
 //! While this library is the standard way of working with JSON in Rust,
 //! there is a next-generation library called Serde that's in the works (it's
 //! faster, overcomes some design limitations of rustc-serialize and has more
-//! features). You might consider using it when starting new project or
+//! features). You might consider using it when starting a new project or
 //! evaluating Rust JSON performance.
 
 use self::JsonEvent::*;
@@ -1492,6 +1492,8 @@ impl<T: Iterator<Item = char>> Parser<T> {
                 // Make sure we don't underflow.
                 if res > (i64::MAX as u64) + 1 {
                     Error(SyntaxError(InvalidNumber, self.line, self.col))
+                } else if res == 0 {
+                    I64Value(res as i64)
                 } else {
                     I64Value((!res + 1) as i64)
                 }
@@ -1681,7 +1683,7 @@ impl<T: Iterator<Item = char>> Parser<T> {
                         self.bump();
                         return Ok(res);
                     },
-                    Some(c) if c.is_control() =>
+                    Some(c) if c <= '\u{1F}' =>
                         return self.error(ControlCharacterInString),
                     Some(c) => res.push(c),
                     None => unreachable!()
@@ -1932,7 +1934,7 @@ impl<T: Iterator<Item = char>> Builder<T> {
         match self.token.take() {
             None => {}
             Some(Error(e)) => { return Err(e); }
-            ref tok => { panic!("unexpected token {:?}", tok); }
+            _ => { return Err(SyntaxError(InvalidSyntax, self.parser.line, self.parser.col)); }
         }
         result
     }
@@ -2555,7 +2557,6 @@ impl FromStr for Json {
 #[cfg(test)]
 mod tests {
     use self::Animal::*;
-    use self::DecodeEnum::*;
     use {Encodable, Decodable};
     use super::Json::*;
     use super::ErrorCode::*;
@@ -2971,6 +2972,16 @@ mod tests {
         assert_eq!(Json::from_str("\""),     Err(SyntaxError(EOFWhileParsingString, 1, 2)));
         assert_eq!(Json::from_str("\"lol"),  Err(SyntaxError(EOFWhileParsingString, 1, 5)));
         assert_eq!(Json::from_str("\"\n\""), Err(SyntaxError(ControlCharacterInString, 2, 1)));
+        assert_eq!(Json::from_str("\"\0\""), Err(SyntaxError(ControlCharacterInString, 1, 2)));
+        assert_eq!(Json::from_str("\"\u{1}\""), Err(SyntaxError(ControlCharacterInString, 1, 2)));
+        assert_eq!(Json::from_str("\"\u{1F}\""), Err(SyntaxError(ControlCharacterInString, 1, 2)));
+
+        // Only C0 control characters are excluded.
+        assert!('\u{7F}'.is_control());
+        assert!('\u{80}'.is_control());
+        assert!('\u{9F}'.is_control());
+        let c1_controls = "\u{7F}\u{80}\u{9F}".to_string();
+        assert_eq!(Json::from_str(&format!("\"{}\"", c1_controls)), Ok(String(c1_controls)));
 
         assert_eq!(Json::from_str("\"\""), Ok(String("".to_string())));
         assert_eq!(Json::from_str("\"foo\""), Ok(String("foo".to_string())));
@@ -3414,6 +3425,11 @@ mod tests {
             Err(_) => panic!("Unable to parse json_str: {}", json_str),
             _ => {} // it parsed and we are good to go
         }
+    }
+    
+    #[test]
+    fn test_negative_zero() {
+        Json::from_str("{\"test\":-0}").unwrap();
     }
 
     #[test]
@@ -3890,7 +3906,7 @@ mod tests {
         struct Foo<P> {
             phantom_data: PhantomData<P>
         }
-        
+
         let f: Foo<u8> = Foo {
             phantom_data: PhantomData
         };
@@ -3927,5 +3943,13 @@ mod tests {
         let s = super::encode(&f).unwrap();
         let d = super::decode(&s).unwrap();
         assert_eq!(f, d);
+    }
+
+    #[test]
+    fn test_unexpected_token() {
+        match Json::from_str("{\"\":\"\",\"\":{\"\":\"\",\"\":[{\"\":\"\",}}}") {
+            Err(e) => assert_eq!(e, SyntaxError(InvalidSyntax, 1, 32)),
+            _ => ()
+        };
     }
 }
